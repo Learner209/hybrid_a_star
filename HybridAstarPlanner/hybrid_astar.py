@@ -10,16 +10,21 @@ from queue import PriorityQueue
 from loguru import logger
 import tqdm
 import cv2
+import dubins
+from scipy.signal import savgol_filter
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) +
                 "/../../MotionPlanning/")
 from PIL import Image
+
+
 
 # HybridAstarPlanner
 from HybridAstarPlanner.traj_solver import TRAJSolver
 from HybridAstarPlanner.astar import *
 
 import CurvesGenerator.reeds_shepp as rs
+from CurvesGenerator.quintic_polynomial import non_holonomic_simulation
 from voronoi.geometry import *
 
 # import utils
@@ -38,6 +43,8 @@ from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 import torch
 import torch.nn.functional as F
 
+from mpl_toolkits.axes_grid1 import Grid
+from scipy.special import comb
 
 
 
@@ -134,7 +141,6 @@ class AstarPathPlanner():
 
         fig, ax = plt.subplots()
 
-        ax.scatter(np.array(expanded)[...,0], np.array(expanded)[...,1], color = "green")
         path = AstarPath()
         while(cur is not None):
             path.x.append(cur.x)
@@ -142,11 +148,37 @@ class AstarPathPlanner():
             cur = cur.prev
         path.x = path.x[::-1]
         path.y = path.y[::-1]
-        print(f'the path length is {len(path.x)}')
-        ax.scatter(path.x, path.y, color = "red")
+
+        # self.extract_and_vis_path(cur, np.array(expanded), ox, oy, ax, None, None)
+        return path.x, path.y
+    
+
+    def extract_and_vis_path(self, cur, expanded_list, ox, oy, ax, alpha, potential_field_weight):
+        color_map = np.random.rand(expanded_list.shape[0], 3)
+        color_map = np.sort(color_map, axis = 1)
+        ax.scatter(np.array(expanded_list)[...,0], np.array(expanded_list)[...,1], c = color_map,  s=7.5)
+
+        path = AstarPath()
+        while(cur is not None):
+            path.x.append(cur.x)
+            path.y.append(cur.y)
+            cur = cur.prev
+        path.x = path.x[::-1]
+        path.y = path.y[::-1]
+        ax.scatter(path.x, path.y, color = "red", s=12)
         ax.scatter(ox,oy, color = "gray")
+        if alpha is not None and potential_field_weight is not None:
+            ax.set_title(f'$\\beta={{:.2f}},\\alpha={{:.2f}}$'.format(alpha, potential_field_weight))
+        elif alpha is not None:
+            ax.set_title(f'$\\beta={{:.2f}}$'.format(alpha))
+        elif potential_field_weight is not None:
+            ax.set_title(f'$\\alpha={{:.2f}}$'.format(potential_field_weight))
+        else:
+            pass
         
-        plt.show()
+        # px, py = np.where(potential_field>=50)[0], np.where(potential_field>=50)[1]
+        # ax.scatter(px,py, color = "pink")
+        return path.x, path.y, path.yaw
 
     def find_next_node(self, cur, dire, H, W, obsmap):
         new_node_x = cur.x + dire[0]
@@ -188,12 +220,13 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
         # self.potential_voronoi_field /= np.linalg.norm(self.potential_voronoi_field) 
 
 
-    def astar(self, sx, sy, syaw, gx, gy, gyaw, yaw_reso, obsmap, alpha = 1, VIZ_PLOT = True, **kwargs):
+    def astar(self, sx, sy, syaw, gx, gy, gyaw, yaw_reso, obsmap, alpha = 1, VIZ_PLOT = False, **kwargs):
         print(f"----------------------------Entering into the astar algorithm path planner !------------------------------------")
         H, W = obsmap.shape
 
         potential_field_weight = kwargs.get('potential_field_weight')
         steering_penalty_weight = kwargs.get("steering_penalty_weight", 0)
+        
 
         self.__holonomic_heuristic_with_obstacle = calc_holonomic_heuristic_with_obstacle(obsmap, gx, gy)
         self.__yaw_traj, self.__non_holonomic_heuristic_without_obstacle = cal_non_holonomic_without_obstacles(obsmap, gx, gy, gyaw, yaw_reso)
@@ -241,7 +274,6 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
             #     break
 
             directions = [[math.cos(yaw), math.sin(yaw)] for yaw in self.yaw_set]
-            steering_penalty_weight = 0.25
             for i in range(len(directions)):
                 ret, node_x, node_y, node_cost, node_heuristics, id = self.find_next_node(cur, i, directions[i], H, W, obsmap, kdtree, alpha, steering_penalty_weight, potential_field_weight)
                 # print(f'the ret is {ret}, the node_x is {node_x}, the node_y is {node_y}, the node_cost is {node_cost}')
@@ -258,19 +290,21 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
                                 open_list.put((node_heuristics + node_cost, new_node))
 
         print(f"----------------------------Finished the astar algorithm path planner !------------------------------------")
+        del self.__holonomic_heuristic_with_obstacle, self.__yaw_traj, self.__non_holonomic_heuristic_without_obstacle
         if VIZ_PLOT:
             fig, ax = plt.subplots()
-            x, y, yaw = self.extract_and_vis_path(cur, np.array(expanded), ox, oy, ax, None, None)
+            x, y, yaw = self.extract_and_vis_path(cur, np.array(expanded), ox, oy, ax, None, None, None)
             plt.show()
             print(f'the shape of the {np.concatenate([np.array(x)[...,None], np.array(y)[...,None]], axis = 1).shape}')
             np.save("trajectory.npy", np.concatenate([np.array(x)[...,None], np.array(y)[...,None]], axis = 1))
             return np.concatenate([np.array(x)[...,None], np.array(y)[...,None]], axis = 1)
         return cur, np.array(expanded), ox, oy
 
-    def extract_and_vis_path(self, cur, expanded_list, ox, oy, ax, alpha, potential_field_weight):
+    def extract_and_vis_path(self, cur, expanded_list, ox, oy, ax, alpha, potential_field_weight, steering_cost = None, VIS_BEZIER_CURVE = True, VIZ_EXPANDED = False):
         color_map = np.random.rand(expanded_list.shape[0], 3)
         color_map = np.sort(color_map, axis = 1)
-        ax.scatter(np.array(expanded_list)[...,0], np.array(expanded_list)[...,1], c = color_map,  s=7.5)
+        if VIZ_EXPANDED:
+            ax.scatter(np.array(expanded_list)[...,0], np.array(expanded_list)[...,1], c = color_map,  s=7.5)
 
         path = AstarPath()
         while(cur is not None):
@@ -279,16 +313,29 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
             cur = cur.prev
         path.x = path.x[::-1]
         path.y = path.y[::-1]
-        ax.scatter(path.x, path.y, color = "red", s=12)
-        ax.scatter(ox,oy, color = "gray")
-        if alpha is not None and potential_field_weight is not None:
-            ax.set_title(f'$\\beta={{:.2f}},\\alpha={{:.2f}}$'.format(alpha, potential_field_weight))
-        elif alpha is not None:
-            ax.set_title(f'$\\beta={{:.2f}}$'.format(alpha))
-        elif potential_field_weight is not None:
-            ax.set_title(f'$\\alpha={{:.2f}}$'.format(potential_field_weight))
+        init_traj = np.concatenate([np.array(path.x)[...,None], np.array(path.y)[...,None]], axis = 1)
+        if VIS_BEZIER_CURVE:
+            ax.plot(init_traj[...,0], init_traj[...,1], c='blue', linewidth = 2)
+            yhat = savgol_filter(init_traj[...,1], 51, 3) # window size 51, polynomial order 3
+            ax.plot(init_traj[...,0], yhat, c='pink', linewidth = 2)
+            init_traj[...,1] = yhat
+            # assert False
+            xvals, yvals = bezier_curve(init_traj, nTimes=1000)
+            init_traj = np.concatenate([xvals[..., None], yvals[...,None]], axis=1)
+            ax.plot(init_traj[...,0], init_traj[...,1], c='red', linewidth = 2)
         else:
-            pass
+            ax.scatter(path.x, path.y, color = "red", s=12)
+
+        ax.scatter(ox,oy, color = "gray")
+        message = f''
+        if alpha is not None:
+            message += f' $\\beta={{:.2f}}$'.format(alpha)
+        if potential_field_weight is not None:
+            message += f' $\\gamma={{:.2f}}$'.format(potential_field_weight)
+        if steering_cost is not None:
+            message += f' $\\lambda={{:.2f}}$'.format(steering_cost)
+        if len(message) > 0:
+            ax.set_title(message)
         
         # px, py = np.where(potential_field>=50)[0], np.where(potential_field>=50)[1]
         # ax.scatter(px,py, color = "pink")
@@ -321,7 +368,7 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
             voronoi_potential_field_weights = np.array([self.potential_voronoi_field[_1[0], _1[1]],
                                                         self.potential_voronoi_field[_2[0], _2[1]],
                                                         self.potential_voronoi_field[_3[0], _3[1]],
-                                                        self.potential_voronoi_field[_4[0], _4[1]]])
+                                                        self.potential_voronoi_field[_4[0], _4[1]]]) * 5
 
         holonomic_heuristic_with_obstacle_weight = np.array([self.__holonomic_heuristic_with_obstacle[_1[0], _1[1]],
                                                              self.__holonomic_heuristic_with_obstacle[_2[0], _2[1]],
@@ -342,7 +389,6 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
         new_heuristics += steering_penalty_loss * steering_penalty_weight
         if voronoi_potential_field_weight is not None:
             new_heuristics = (1-voronoi_potential_field_weight) * new_heuristics + voronoi_potential_field_weight * voronoi_potential_field_interpolation
-
         return new_heuristics, holonomic_heuristic_with_obstacle_interpolation, non_holonomic_without_obstacles_interpolation
     
     def get_steering_penalty(self, yaw_reso, yaw_id_1, yaw_id_2):
@@ -393,14 +439,23 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
         gx = 110
         gy = 110
         hor = 2
-        ver = 3
-        fig, axs = plt.subplots(hor, ver)
-        alpha = 0.5
+        ver = 5
+        fig = plt.figure()
+        grid = Grid(fig, rect=111, nrows_ncols=(2, 5),
+                axes_pad=0.2, label_mode='L',
+                )
+        # fig, axs = plt.subplots(hor, ver, figsize=(8,8))
+        alpha = np.arange(0, 1.0, 0.1)
+        cnt = 0
         for i in range(hor):
             for j in range(ver):
                 idx = i * ver + j
-                cur, expanded, ox, oy = self.astar(sx = sx, sy = sy, syaw = np.deg2rad(90), gx = gx, gy = gy, gyaw=np.deg2rad(120), yaw_reso=30, obsmap = np.load('map.npy'), alpha = alpha)
-                self.extract_and_vis_path(cur, expanded, ox, oy, axs[i,j], None, None)
+                print(f'we have been trying the {i} {j}')
+                cur, expanded, ox, oy = self.astar(sx = sx, sy = sy, syaw = np.deg2rad(90), gx = gx, gy = gy, gyaw=np.deg2rad(120), yaw_reso=5, obsmap = np.load('map.npy'), alpha = alpha[idx])
+                self.extract_and_vis_path(cur, expanded, ox, oy, grid[cnt], alpha[idx], None)
+                # grid[cnt].set_xlim(0,1)
+                # grid[cnt].set_ylim(0,1)
+                cnt += 1
         plt.tight_layout()
         plt.show()
         
@@ -412,11 +467,15 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
         obsmap = np.load('map.npy')
         potential_voronoi_field = np.load("voronoi_potential_field.npy")
         self.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
-        potential_voronoi_weights = np.arange(0, 1, 0.16)
+        potential_voronoi_weights = np.arange(0, 1, 0.1)
         hor = 2
-        ver = 3
-        fig, axs = plt.subplots(hor, ver)
-        alpha = 0.1
+        ver = 5
+        fig = plt.figure()
+        grid = Grid(fig, rect=111, nrows_ncols=(2, 5),
+                axes_pad=0.3, label_mode='L',
+                )
+        cnt = 0
+        alpha = 0.5
         potential_voronoi_field = np.arange(0, 1, 0.1)
         for i in range(hor):
             for j in range(ver):
@@ -426,10 +485,44 @@ class ImprovedAstarPathPlanner(AstarPathPlanner):
                     "potential_field_weight": potential_voronoi_weights[idx],
                 }
                 cur, expanded, ox, oy = self.astar(sx = sx, sy = sy, syaw = np.deg2rad(90), gx = gx, gy = gy, gyaw=np.deg2rad(120), yaw_reso=30, obsmap = np.load('map.npy'), alpha = alpha, **kwargs)
-                self.extract_and_vis_path(cur, expanded, ox, oy, axs[i,j], alpha, potential_voronoi_weights[idx])
+                self.extract_and_vis_path(cur, expanded, ox, oy, grid[cnt], alpha, potential_voronoi_weights[idx])
+                cnt += 1
         plt.tight_layout()
         plt.show()
         
+    def reproduce_steering_cost(self):
+        sx = 5
+        sy = 5
+        gx = 110
+        gy = 110
+        obsmap = np.load('map.npy')
+        potential_voronoi_field = np.load("voronoi_potential_field.npy")
+        self.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
+        potential_voronoi_weights = np.arange(0, 0, 0.1)
+        hor = 2
+        ver = 5
+        fig = plt.figure()
+        grid = Grid(fig, rect=111, nrows_ncols=(2, 5),
+                axes_pad=0.3, label_mode='L',
+                )
+        cnt = 0
+        alpha = 0.4
+        steering_cost = np.arange(0, 1, 0.1)
+        for i in range(hor):
+            for j in range(ver):
+                idx = i * ver + j
+                kwargs = {
+                    "potential_field_weight": 0.6,
+                    "steering_penalty_weight":steering_cost[idx]
+                }
+                cur, expanded, ox, oy = self.astar(sx = sx, sy = sy, syaw = np.deg2rad(90), gx = gx, gy = gy, gyaw=np.deg2rad(120), yaw_reso=30, obsmap = np.load('map.npy'), alpha = alpha, **kwargs)
+                self.extract_and_vis_path(cur, expanded, ox, oy, grid[cnt], alpha, kwargs["potential_field_weight"], steering_cost[idx])
+                cnt += 1
+                # plt.show()
+                # assert False
+        plt.tight_layout()
+        plt.show()
+       
     
 class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
     
@@ -454,6 +547,7 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         self.__obsmap = obsmap
         self.H, self.W = self.__obsmap.shape
         self.__ridges_kdtree = kd.KDTree([[x, y] for x, y in zip(self.__vor_vertices[...,0], self.__vor_vertices[...,1])])
+        self.__obs_kdtree = kd.KDTree([[x, y] for x, y in zip(self.__points[...,0], self.__points[...,1])])
 
     def voronoi_potential_field_loss(self, point:torch.Tensor, last:torch.Tensor) -> float:
         flag = True
@@ -464,7 +558,7 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         # print(f'the d_o is {d_o}')
 
         if d_o >= self.__d_o_max:
-            return flag, 0, 0, 0
+            return flag, 0, 0, torch.tensor(0)
         
         if is_in_polygon(self.__triangles, point):
             flag = False
@@ -482,16 +576,17 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
             (torch.pow(d_o - self.__d_o_max, 2)  / (torch.pow(self.__d_o_max, 2) + 1e-6))
         assert isinstance(p, torch.Tensor)
         if torch.isnan(p):
-            p = last
+            p = torch.tensor(0)
 
         # print(f'do:{d_o.data.cpu().numpy()}, d_v:{d_v.data.cpu().numpy()},p:{p.data.cpu().numpy()}')
-        return flag, d_o, d_v, p
+        return flag, d_o, d_v, p * 1
     
     def obstacle_collision_field_loss(self, point:torch.Tensor) -> float:
         # find the nearest obstacle point
         batch_d_o = torch.cdist(self.__points[None].to(point.device), point[None], p=2.0)[0].double()
         d_o = torch.min(batch_d_o)
-        return d_o - self.__d_o_max
+        # print(f'do:{d_o.data.cpu().numpy()}, d_o_max:{self.__d_o_max}')
+        return torch.pow(abs(d_o - self.__d_o_max), 2) * 100
 
     def curvature_constrain_loss(self, traj:torch.Tensor, index: int, curvature_max:torch.Tensor) -> float:
         N, _ = traj.shape
@@ -505,7 +600,8 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
 
         delta_phi = torch.abs(delta_phi_i_1 - delta_phi_i)
         delta_xi = torch.norm(diff[index-1, ...])
-        return delta_phi / delta_xi - curvature_max
+        # print(f'delta_phi_i_1:{delta_phi_i_1}, delta_phi_i:{delta_phi_i}, delta_xi:{delta_xi}')
+        return torch.pow(abs(delta_phi / delta_xi - curvature_max), 2) * 100
     
     def traj_balance_loss(self, traj:torch.Tensor, index: int) -> float:
         N, _ = traj.shape
@@ -514,7 +610,7 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         diff = torch.diff(traj, n=1, dim=0)
         delta_xi = torch.norm(diff[index-1, ...])
         delta_xi_1 = torch.norm(diff[index, ...])
-        return (delta_xi - delta_xi_1) * (delta_xi - delta_xi_1)
+        return (delta_xi - delta_xi_1) * (delta_xi - delta_xi_1) * 100
 
     def steering_loss(self, traj:torch.Tensor, index: int, curvature_gauge: float) -> float:
         """
@@ -530,7 +626,7 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         delta_phi_i =  torch.atan2(diff[index-1, 1], diff[index-1, 0] + epsilon if diff[index-1, 0] == 0 else diff[index-1, 0])
         delta_phi = torch.abs(delta_phi_i_1 - delta_phi_i)
 
-        return torch.abs(delta_phi - curvature_gauge)
+        return torch.pow(torch.abs(delta_phi - curvature_gauge), 2) * 150
 
     def run(self, traj, resolution) -> list:
         traj = torch.from_numpy(np.load("trajectory.npy")).float()
@@ -611,17 +707,34 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         alpha = cfg.alpha
         kw = {"potential_field_weight": cfg.potential_field_weight,"steering_penalty_weight":cfg.steering_penalty_weight}
 
-        # init_traj = self.astar(sx, sy, syaw, gx, gy, gyaw, yaw_reso, obsmap, alpha, **kw)
-        init_traj = np.load("trajectory.npy")
-        print(f'the shape of the init_traj is {init_traj.shape}')
-        plt.plot(init_traj[...,0], init_traj[...,1])
-        # plt.show()    
-        init_rs_traj = self.cal_reeds_shepp_optimal_path(init_traj, cfg)
-        plt.plot(init_rs_traj[...,0], init_rs_traj[...,1])
-        plt.show()    
+        cur, _, ox, oy = self.astar(sx, sy, syaw, gx, gy, gyaw, yaw_reso, obsmap, alpha, **kw)
+        path = AstarPath()
+        while(cur is not None):
+            path.x.append(cur.x)
+            path.y.append(cur.y)
+            cur = cur.prev
+        path.x = path.x[::-1]
+        path.y = path.y[::-1]
+        init_traj = np.concatenate([np.array(path.x)[...,None],np.array(path.y)[...,None]], axis =1)
 
-        assert False
-        # torch.random.manual_seed(0)
+        # init_traj = np.load("trajectory.npy")
+        # np.save('trajectory.npy', init_traj)
+        print(f'the shape of the init_traj is {init_traj.shape}')
+        yhat = savgol_filter(init_traj[...,1], 51, 3) # window size 51, polynomial order 3
+        init_traj[...,1] = yhat
+
+        plt.plot(init_traj[...,0], init_traj[...,1], c='green', linewidth = 2)
+        # assert False
+        self.ox, self.oy = np.where(obsmap==1)[0], np.where(obsmap==1)[1]
+        xvals, yvals = bezier_curve(init_traj, nTimes=1000)
+        init_rs_traj = self.cal_reeds_shepp_optimal_path(init_traj, cfg, 1)
+        # plt.plot(init_rs_traj[...,0], init_rs_traj[...,1], c='red', linewidth = 2)
+        init_rs_traj = np.concatenate([xvals[..., None], yvals[...,None]], axis=1)
+        # plt.plot(init_rs_traj[...,0], init_rs_traj[...,1], c='orange', linewidth = 2)
+        # plt.scatter(ox, oy, c = 'gray')
+        # plt.show()    
+        # assert False
+        torch.random.manual_seed(2023)
         cfg.mode = 'train'
         cfg.freeze()
         output_dir = cfg.output_dir
@@ -631,7 +744,8 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
         logger.info("Running with config:\n{}".format(cfg))
 
         self.cfg = cfg
-        data = torch.from_numpy(np.load("trajectory.npy")).float()
+        self.init_traj = init_traj
+        data = torch.from_numpy(init_traj).float()
 
         logger.info("~~~~~~~~~~~~~~~~~~~~~Creating the model...~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         self.model: nn.Module = TRAJSolver(cfg.solver, self, data, 1, self.H, self.W).to(torch.device(self.cfg.model.device))
@@ -695,16 +809,25 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
                 epoch, loss_meter.avg, epoch_time)]
             s = ', '.join(metric_msgs)
             logger.info(s)
-        plt.plot(self.model.traj[...,0].data.cpu().numpy(), self.model.traj[...,1].data.cpu().numpy())
         if is_main_process() and epoch % self.cfg.solver.show_interval == 0:
-            plt.show()
+            identifier = "traj_2"
+            if not os.path.exists(f"traj_solver/{identifier}"):
+                os.makedirs(f"traj_solver/{identifier}", exist_ok=True)
+            plt.plot(self.init_traj[...,0], self.init_traj[...,1],c = 'green', linewidth=2)
+            plt.plot(self.model.traj[...,0].data.cpu().numpy(), self.model.traj[...,1].data.cpu().numpy(), c = 'red', linewidth=2)
+            plt.scatter(self.ox, self.oy, c = 'gray')
+            len_fig = len(glob.glob(f"traj_solver/{identifier}/*.png"))
+            plt.savefig(f"traj_solver/{identifier}/{len_fig}.png")
+            # plt.show()
+
+            plt.close('all')
         if self.scheduler is not None and not isinstance(self.scheduler, OneCycleScheduler):
             self.scheduler.step()
         return metric_ams
 
     def is_collision_rs_path(self, rspath):
         for point in zip(rspath.x, rspath.y):
-            point = torch.tensor(point).float()
+            point = torch.tensor(point).double()
             point = point / torch.tensor([self.H, self.W])
             # find the nearest obstacle point
             # assert point[0] <= 1 and point[1] <= 1 and point[0] >= 0 and point[1] >= 0, f'the point is {point}'
@@ -729,7 +852,7 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
             if lr >= 0:
                 cost += 1
             else:
-                cost += abs(lr) * 100
+                cost += 10000
 
         for i in range(len(rspath.lengths) - 1):
             if rspath.lengths[i] * rspath.lengths[i + 1] < 0.0:
@@ -753,33 +876,38 @@ class HybridAstarPathPlanner(ImprovedAstarPathPlanner):
 
         return cost
 
-    def cal_reeds_shepp_optimal_path(self, init_traj, cfg):
+    def cal_reeds_shepp_optimal_path(self, init_traj, cfg, stop_sign):
+        if stop_sign == 0:
+            return init_traj
         sampled_init_traj = init_traj[::cfg.reeds_shepp.sample_rate, ...]
         sampled_init_traj = np.concatenate([sampled_init_traj, init_traj[-1][None,...]], axis=0)
         sampled_init_traj_diff = np.diff(sampled_init_traj, n=1, axis=0)
         epsilon = 1e-7
 
+
         print(f'the smapled_init_traj is {sampled_init_traj.shape}')
         seq_len, _ = sampled_init_traj.shape
         opt_path_x, opt_path_y = [], []
+
         for idx in range(seq_len-2):
             seg_syaw = np.arctan2(sampled_init_traj_diff[idx, 1], sampled_init_traj_diff[idx, 0] + epsilon if sampled_init_traj_diff[idx, 0] == 0 else sampled_init_traj_diff[idx, 0])
             seg_gyaw = np.arctan2(sampled_init_traj_diff[idx+1, 1], sampled_init_traj_diff[idx+1, 0] + epsilon if sampled_init_traj_diff[idx+1, 0] == 0 else sampled_init_traj_diff[idx+1, 0])
+            print(f'the starting yaw is {seg_syaw} and the ending yaw is {seg_gyaw}')
 
-            segment_paths = self.cal_reeds_shepp_segment_paths(sampled_init_traj[idx][0], sampled_init_traj[idx][1], seg_syaw,
-                                                       sampled_init_traj[idx+1][0], sampled_init_traj[idx+1][1], seg_gyaw,
-                                                     cfg.reeds_shepp.max_curvature, cfg.reeds_shepp.step_size)
-            least_cost, least_idx = 10000, -1
-            for idx, segment_path in enumerate(segment_paths):
-                cost = self.calc_reeds_shepp_path_cost(segment_path, cfg)
-                if cost < least_cost:
-                    least_idx = idx
-                    least_cost = cost
-            opt_segment_path = segment_paths[least_idx]
-            opt_path_x += opt_segment_path.x
-            opt_path_y += opt_segment_path.y
+            q0 = (sampled_init_traj[idx][0], sampled_init_traj[idx][1], seg_syaw)
+            q1 = (sampled_init_traj[idx+1][0], sampled_init_traj[idx+1][1], seg_syaw)
+            turning_radius = 0.5
+            step_size = 0.01
+
+            path = dubins.shortest_path(q0, q1, turning_radius)
+            configurations, _ = path.sample_many(step_size)
+            segment_path_x = [x for (x, y, theta) in configurations]
+            segment_path_y = [y for (x, y, theta) in configurations]
+            opt_path_x += segment_path_x
+            opt_path_y += segment_path_y
+
         opt_path = np.concatenate([np.array(opt_path_x)[...,None], np.array(opt_path_y)[...,None]], axis=1)
-        return opt_path
+        return self.cal_reeds_shepp_optimal_path(opt_path, cfg, stop_sign - 1)
 
     def cal_reeds_shepp_segment_paths(self, sx, sy, syaw, gx, gy, gyaw, max_curvature, step_size):
         q0 = [sx, sy, syaw]
@@ -808,7 +936,7 @@ def distance_between_line_point(line:torch.Tensor, point:torch.Tensor):
     _2 = point - line[0]
     _1_l = torch.norm(_1)
     _2_l = torch.norm(_2)
-    _d = _1[None] @ _2[None].permute(1,0)
+    _d = torch.dot(_1, _2)
     if _d > _1_l * _1_l or _d < 0.0:
         return min(_2_l, torch.norm(point - line[1]))
     
@@ -842,6 +970,31 @@ def cross_2d(point_1, point_2):
     A = A[..., 2]
     return A
 
+
+def bernstein_poly(i, n, t):
+    """
+    The Bernstein polynomial of n, i as a function of t
+    """
+
+    return comb(n, i) * ( t**(n-i) ) * (1 - t)**i
+
+
+def bezier_curve(points, nTimes=1000):
+
+    nPoints = len(points)
+    xPoints = np.array([p[0] for p in points])
+    yPoints = np.array([p[1] for p in points])
+
+    t = np.linspace(0.0, 1.0, nTimes)
+
+    polynomial_array = np.array([ bernstein_poly(i, nPoints-1, t) for i in range(0, nPoints)   ])
+
+    xvals = np.dot(xPoints, polynomial_array)
+    yvals = np.dot(yPoints, polynomial_array)
+
+    return xvals, yvals
+
+
 def test_point_convex(points, test_point) -> bool:
     for i in range(3):
         # vector ab
@@ -862,6 +1015,41 @@ def test_point_convex(points, test_point) -> bool:
     return True
 
 if __name__ == "__main__":
-    import numba.np.extensions as nbnp
-    import numba
-    pass
+    import numpy as np
+    from scipy.special import comb
+
+    def bernstein_poly(i, n, t):
+        """
+        The Bernstein polynomial of n, i as a function of t
+        """
+
+        return comb(n, i) * ( t**(n-i) ) * (1 - t)**i
+
+
+    def bezier_curve(points, nTimes=1000):
+
+        nPoints = len(points)
+        xPoints = np.array([p[0] for p in points])
+        yPoints = np.array([p[1] for p in points])
+
+        t = np.linspace(0.0, 1.0, nTimes)
+
+        polynomial_array = np.array([ bernstein_poly(i, nPoints-1, t) for i in range(0, nPoints)   ])
+
+        xvals = np.dot(xPoints, polynomial_array)
+        yvals = np.dot(yPoints, polynomial_array)
+
+        return xvals, yvals
+
+
+    from matplotlib import pyplot as plt
+
+    nPoints = 4
+    points = np.random.rand(nPoints,2)*200
+    xpoints = [p[0] for p in points]
+    ypoints = [p[1] for p in points]
+    points = np.load('trajectory.npy')
+    xvals, yvals = bezier_curve(points, nTimes=1000)
+    plt.plot(xvals, yvals)
+
+    plt.show()

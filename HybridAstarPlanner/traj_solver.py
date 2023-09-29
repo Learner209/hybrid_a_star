@@ -46,16 +46,22 @@ class TRAJSolver(nn.Module):
 
                     loss = self.traj_balance_loss_weight * traj_balance_loss + \
                         self.voronoi_potential_field_loss_weight * voronoi_potential_field_loss + \
-                        self.obstacle_collision_field_loss_weight *obstacle_collision_field_loss + \
+                        self.obstacle_collision_field_loss_weight *obstacle_collision_field_loss * 1000 + \
                         self.curvature_constrain_loss_weight * curvature_constrain_loss + \
                         self.steering_loss_weight * steering_loss      # Four loss composition
+                    
+                    # print(f'The traj_balance_loss: {traj_balance_loss} \n \
+                    #     and the voronoi_potential_field_loss:{voronoi_potential_field_loss} \n \
+                    #     and the obstacle_collision_field_loss:{obstacle_collision_field_loss} \n \
+                    #     and the curvature_constrain_loss:{curvature_constrain_loss} \n \
+                    #     and the steering loss:{steering_loss}')
+
                     losses += loss
 
-                    # print(f'The grad_fn for traj_balance_loss: {traj_balance_loss.grad_fn} grad:{traj_balance_loss.grad} \n \
-                    #     and the grad_fn for voronoi_potential_field_loss:{voronoi_potential_field_loss.grad_fn} grad:{voronoi_potential_field_loss.grad} \n \
-                    #     and the grad_fn for obstacle_collision_field_loss:{obstacle_collision_field_loss.grad_fn} grad:{obstacle_collision_field_loss.grad} \n \
-                    #     and the grad_fn for curvature_constrain_loss:{curvature_constrain_loss.grad_fn} grad:{curvature_constrain_loss.grad} \n \
-                    #     and the grad_fn for test_tensor:{test_tensor.grad_fn} grad:{test_tensor.grad}')
+                    # print(f'The grad_fn for traj_balance_loss: {traj_balance_loss.grad_fn} grad:{traj_balance_loss} \n \
+                    #     and the grad_fn for voronoi_potential_field_loss:{voronoi_potential_field_loss.grad_fn} grad:{voronoi_potential_field_loss} \n \
+                    #     and the grad_fn for obstacle_collision_field_loss:{obstacle_collision_field_loss.grad_fn} grad:{obstacle_collision_field_loss} \n \
+                    #     and the grad_fn for curvature_constrain_loss:{curvature_constrain_loss.grad_fn} grad:{curvature_constrain_loss}')
                 overall_losses.append(losses)
 
             loss = torch.stack(overall_losses).mean()  

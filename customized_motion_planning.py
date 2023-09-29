@@ -3,9 +3,6 @@ from voronoi.geometry import Line, Triangle
 from voronoi.astar import Astar
 from voronoi.extract_contours import ContourDetector
 from voronoi.potential_voronoi_field import VoronoiField
-# from config import cfg
-# print(dir(config))
-# from config import cfg
 from config.defaults import _C as cfg
 import numpy as np
 

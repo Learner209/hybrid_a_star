@@ -64,6 +64,7 @@ def calc_all_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size=STEP_SIZE):
         path.directions = directions
         path.lengths = [l / maxc for l in path.lengths]
         path.L = path.L / maxc
+        print(f'the direction of the path is {path.directions}')
 
     return paths
 
@@ -678,6 +679,50 @@ def check_path(sx, sy, syaw, gx, gy, gyaw, maxc):
         for i in range(len(d)):
             assert abs(d[i] - STEP_SIZE) <= 0.001
 
+def vis_reeds_sheep():
+    from mpl_toolkits.axes_grid1 import Grid
+
+    plt.close('all')
+    fig = plt.figure()
+    grid = Grid(fig, rect=111, nrows_ncols=(20, 30),
+                axes_pad=0.05, label_mode='L',
+                )
+    start_arange = np.arange(10, 20, 0.2)
+    end_arange = np.arange(10, 20, 0.2)
+
+    yaw_set = np.arange(20, 360, 5)
+    yaw_set = np.deg2rad(yaw_set)
+    yaw_set_len = yaw_set.shape[0]
+
+    for ax in grid:
+        
+        
+        start_x_choice = np.random.randint(0, start_arange.shape[0])
+        end_x_choice = np.random.randint(0, end_arange.shape[0])
+        start_y_choice = np.random.randint(0, start_arange.shape[0])
+        end_y_choice = np.random.randint(0, end_arange.shape[0])
+        start_yaw_choice = np.random.randint(0, yaw_set_len)
+        end_yaw_choice = np.random.randint(0, yaw_set_len)
+        color = np.random.rand(1, 3)
+
+        while abs(start_arange[start_x_choice] -  end_arange[end_x_choice]) < 3 or abs(start_arange[start_y_choice] - end_arange[end_y_choice]) < 3:
+            start_x_choice = np.random.randint(0, start_arange.shape[0])
+            end_x_choice = np.random.randint(0, end_arange.shape[0])
+            start_y_choice = np.random.randint(0, start_arange.shape[0])
+            end_y_choice = np.random.randint(0, end_arange.shape[0])
+            start_yaw_choice = np.random.randint(0, yaw_set_len)
+            end_yaw_choice = np.random.randint(0, yaw_set_len)
+
+        path = calc_optimal_path(start_arange[start_x_choice], start_arange[start_y_choice], yaw_set[start_yaw_choice],
+                                end_arange[end_x_choice], end_arange[end_y_choice], yaw_set[end_yaw_choice], 0.5)
+        ax.plot(path.x, path.y, color = color[0,...])
+        ax.set_xlim(10, 20) 
+        ax.set_ylim(10, 20) 
+
+        ax.title.set_visible(False)
+        ax.axis('on')
+    plt.tight_layout()
+
 
 def main():
     start_x = 5.0  # [m]
@@ -695,4 +740,5 @@ def main():
     print(path.y)
 
 if __name__ == '__main__':
+    vis_reeds_sheep()
     main()

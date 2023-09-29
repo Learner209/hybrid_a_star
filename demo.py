@@ -5,6 +5,7 @@ from voronoi.extract_contours import ContourDetector
 from voronoi.potential_voronoi_field import VoronoiField
 from config.defaults import _C as cfg
 import numpy as np
+import matplotlib.pyplot as plt
 
 from HybridAstarPlanner.hybrid_astar import AstarPathPlanner, ImprovedAstarPathPlanner, HybridAstarPathPlanner
 
@@ -45,9 +46,9 @@ if __name__ == '__main__':
     # vor.generate_plot()
     # vor.show()
 
-    # # calculate Voronoi potential field
-    # vorfield = VoronoiField(vor_result, alpha=np.array(10), d_o_max=np.array(.10))
-    # potential_voronoi_field = vorfield.run(np.array([cfg.x_resolution, cfg.y_resolution]), start, end)
+    # calculate Voronoi potential field
+    vorfield = VoronoiField(vor_result, alpha=np.array(0.001), d_o_max=np.array(.20))
+    potential_voronoi_field = vorfield.run(np.array([cfg.x_resolution, cfg.y_resolution]), start, end)
     # vorfield.generate_plot()
     # terrain_field = vorfield.terrain_on_resolution()
     # vorfield.show()
@@ -62,25 +63,21 @@ if __name__ == '__main__':
     gx = 110
     gy = 110
 
-    print(f'the start is {sx, sy} and the end is {gx, gy}')
-    # astar_path_planner = AstarPathPlanner()
-    # astar_path_planner.astar(sx = sx, sy = sy, gx = gx, gy = gy, obsmap = np.load('map.npy'))a
-    # assert False
     obsmap = np.load('map.npy')
     potential_voronoi_field = np.load("voronoi_potential_field.npy")
-    improved_astar_path_planner = ImprovedAstarPathPlanner()
-    improved_astar_path_planner.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
     kwargs = {
         "potential_field_weight": 0.5,
         "steering_penalty_weight":0.0
     }
-    improved_astar_path_planner.reproduce_heuristics_relation()
-    # improved_astar_path_planner.reproduce_potential_voronoi_field_variation()
-    # improved_astar_path_planner.get_steering_penalty(30,0,1)
-    # Alpha = 1 means using the non-holomomic-without_obstacles 
-    # Alpha = 0 mean using the holomomic-with_obstacles 
-    # traj = improved_astar_path_planner.astar(sx = sx, sy = sy, syaw = np.deg2rad(120), gx = gx, gy = gy, gyaw=np.deg2rad(120), yaw_reso=5, obsmap = np.load('map.npy'), alpha = 0.5, **kwargs)
-    # hybrid_astar_path_planner = HybridAstarPathPlanner(vor_result, obsmap = obsmap, alpha=np.array(10), d_o_max=np.array(cfg.d_o_max))
-    # hybrid_astar_path_planner.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
+
+    hybrid_astar_path_planner = HybridAstarPathPlanner(vor_result, obsmap = obsmap, alpha=np.array(10), d_o_max=np.array(cfg.d_o_max))
+    hybrid_astar_path_planner.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
+    segment_paths = hybrid_astar_path_planner.cal_reeds_shepp_segment_paths(5, 5, np.deg2rad(120), 8, 8, np.deg2rad(120), 0.5, 0.0001)
+    # for idx, segment_path in enumerate(segment_paths):
+    #     path_x = segment_path.x
+    #     path_y = segment_path.y
+    #     plt.plot(path_x, path_y, color = np.random.rand(1, 3)[0])
+    # plt.show()
+
     # hybrid_astar_path_planner.run(None, np.array([cfg.x_resolution, cfg.y_resolution]))
-    # hybrid_astar_path_planner.main(cfg)
+    hybrid_astar_path_planner.main(cfg)

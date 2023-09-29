@@ -1,16 +1,11 @@
-import heapq
-import math
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator
-
-import sys
-sys.path.append("/home/liilu/Desktop/COURSE/AI/plan_planning/MotionPlanning")
-
 import glob
-from CurvesGenerator.quintic_polynomial import non_holonomic_simulation
+# from CurvesGenerator.quintic_polynomial import non_holonomic_simulation
+from mpl_toolkits.axes_grid1 import Grid
 
 
 VIS_PLOT = True
@@ -141,3 +136,47 @@ def vis_non_holonomic_without_obstacles(obsmap, yaw_traj_length, yaw_reso):
 
     # plt.show()
 
+def vis_non_holonomic_without_obstacles_2(obsmap, yaw_reso):
+    non_holonomic_yaw_traj = np.load("non_holonomic_yaw_traj.npy")
+    yaw_set = np.arange(0, 360, yaw_reso)
+    yaw_set = np.deg2rad(yaw_set)
+    yaw_set_len = yaw_set.shape[0]
+
+    H, W = obsmap.shape
+    ox, oy = np.where(obsmap==1)[0], np.where(obsmap==1)[1]
+
+    hor = 3
+    ver = 6
+    fig, axs = plt.subplots(hor, ver)
+
+    grid = Grid(fig, rect=111, nrows_ncols=(3, 6),
+                axes_pad=0.15, label_mode='L',
+                )
+    ax_iter = iter(grid)
+
+    cnt = 0
+    for i in range(hor):
+        for j in range(ver):
+            
+            idx = 4 * (i * ver  + j)
+            path_x = non_holonomic_yaw_traj[::20,::20,idx,0,:]
+            path_y = non_holonomic_yaw_traj[::20,::20,idx,1,:]
+
+            color_map = np.random.rand(path_x.shape[0] * path_x.shape[0], 3)
+            # color_map = np.sort(color_map, axis = 1)
+
+            for m in range(path_x.shape[0]):
+                for n in range(path_y.shape[0]):
+                    color_idx = m * path_x.shape[0] + n
+                    grid[cnt].scatter(path_x, path_y, color = color_map[color_idx], s=12)
+                    # axs[i,j].scatter(ox, oy, color = "gray")
+                    grid[cnt].set_title(f'$yaw={{:.1f}}\degree$'.format(np.rad2deg(yaw_set[idx])))
+            cnt += 1
+    plt.tight_layout()
+
+    plt.show()
+ 
+
+
+if __name__ == "__main__":
+    vis_non_holonomic_without_obstacles_2(obsmap=np.load('map.npy'), yaw_reso=5)

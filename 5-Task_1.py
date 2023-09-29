@@ -8,12 +8,6 @@ MAP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '3-map/map.n
 ### START CODE HERE ###
 # This code block is optional. You can define your utility function and class in this block if necessary.
 
-
-from voronoi.voronoi import GeneralizedVoronoi, run_type
-from voronoi.geometry import Line, Triangle
-from voronoi.astar import Astar
-from voronoi.extract_contours import ContourDetector
-from voronoi.potential_voronoi_field import VoronoiField
 from config.defaults import _C as cfg
 import numpy as np
 
@@ -39,10 +33,15 @@ def A_star(world_map, start_pos, goal_pos):
 
     ### START CODE HERE ###
   
+    sx = start_pos[0]
+    sy = start_pos[1]
+    gx = goal_pos[0]
+    gy = goal_pos[1]
 
-  
-
-    ###  END CODE HERE  ###
+    astar_path_planner = AstarPathPlanner()
+    path_x, path_y = astar_path_planner.astar(sx = sx, sy = sy, gx = gx, gy = gy, obsmap = world_map)
+    path = [[path_x, path_y] for (path_x, path_y) in zip(path_x, path_y)]
+    ###  END CODE HERE  ### 
     return path
 
 

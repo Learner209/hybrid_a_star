@@ -39,7 +39,7 @@ class VoronoiField:
         self.__inner_polygen_points = []
 
 
-    def query(self, point:np.ndarray, last:np.ndarray, filter_inner_polygen_threshold = 0.013) -> float:
+    def query(self, point:np.ndarray, last:np.ndarray, filter_inner_polygen_threshold = 0.007) -> float:
         flag = True
         # find the nearest obstacle point
         point = np.array(point) if not isinstance(point, np.ndarray) else point
@@ -66,7 +66,7 @@ class VoronoiField:
             (pow(d_o - self.__d_o_max, 2)  / (pow(self.__d_o_max, 2) + 1e-6)))
         if np.isnan(p):
             p = np.array(0)
-        print(f'do:{d_o}, d_v:{d_v},p:{p}')
+        # print(f'do:{d_o}, d_v:{d_v},p:{p}')
         return flag, d_o, d_v, np.array(p)
         
     def run(self,resolution, start, end) -> list:
@@ -115,7 +115,9 @@ class VoronoiField:
         for point in self.__inner_polygen_points:
             cv2.circle(terrain, center = (int((point[1]) * self.x_volume), int((1-point[0]) * self.y_volume)), radius = 1, color = (0, 0, 255), thickness=1, lineType=8, shift=0)
         terrain = terrain.astype(np.uint8)
-        print(f'the input type of the np.tile si {np.tile(self.__pot_field[::-1,:, None], (1,1,3)).dtype} and another is {terrain.dtype}')
+        print(f'the input type of the np.tile si {np.tile(self.__pot_field[::-1,:, None], (1,1,3)).dtype} and another is {self.__pot_field.shape}')
+        print(f'the shape of the first arugment is {terrain.shape}')
+        print(f'the second argument of the function is {np.tile((255-self.__pot_field)[::-1,:, None], (1,1,3)).shape}')
         dst = cv2.addWeighted(terrain, 1, np.tile((255-self.__pot_field)[::-1,:, None], (1,1,3)), 1, 0)
         cv2.imshow('sas', dst)
         cv2.imshow('ori', terrain)

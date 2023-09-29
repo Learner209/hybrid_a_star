@@ -12,10 +12,6 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
-import sys
-sys.path.append(f"home/liilu/Desktop/COURSE/AI/plan_planning/MotionPlanning")
-import CurvesGenerator.draw
-
 VIS_PLOT = False
 
 class QuinticPolynomial:
@@ -71,7 +67,7 @@ class Trajectory:
         self.a = []
         self.jerk = []
 
-def non_holonomic_simulation(sx, sy, syaw, gx, gy, gyaw, sv, gv, T=100):
+def non_holonomic_simulation(sx, sy, syaw, gx, gy, gyaw, sv = 1, gv = 1, T=100):
     """
     non_holonomic simulation used to calculate the heuristics
     """
@@ -174,9 +170,6 @@ def simulation():
                                      lambda event: [exit(0) if event.key == 'escape' else None])
         plt.axis("equal")
         plt.plot(path.x, path.y, linewidth=2, color='gray')
-        draw.Car(sx, sy, syaw, 1.5, 3)
-        draw.Car(gx, gy, gyaw, 1.5, 3)
-        draw.Car(path.x[i], path.y[i], path.yaw[i], 1.5, 3)
         plt.title("Quintic Polynomial Curves")
         plt.pause(0.001)
         break

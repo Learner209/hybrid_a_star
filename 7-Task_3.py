@@ -19,6 +19,7 @@ import numpy as np
 
 from HybridAstarPlanner.hybrid_astar import HybridAstarPathPlanner
 
+
 ###  END CODE HERE  ###
 
 
@@ -39,8 +40,71 @@ def self_driving_path_planner(world_map, start_pos, goal_pos):
 
     ### START CODE HERE ###
   
- 
-  
+    # adjustable values
+    Line.point_distance = 0.01
+    Triangle.distance_trash = 0.002
+
+    GeneralizedVoronoi.rdp_epsilon = 0.005
+    ContourDetector.rdp_epsilon = 0.005
+    ContourDetector.area_threshold = 400
+    ContourDetector.gray_thresh_boundary = 20
+
+    #point
+    start = cfg.start
+    end = cfg.end
+
+    # polygon detector
+    pd = ContourDetector('map.npy')
+    pd.run(bound = [1.0, 1.0])
+    triangles = pd.convert_result()
+    # pd.vis_ori_gray()
+    # pd.vis_contour()
+    # pd.show()
+    # terrain = pd.get_terrain()
+    # boundary
+    b1 = Line([[0.0, 0.0], [1.0, 0.0]])
+    b2 = Line([[1.0, 0.0], [1.0, 1.0]])
+    b3 = Line([[1.0, 1.0], [0.0, 1.0]])
+    b4 = Line([[0.0, 0.0], [0.0, 1.0]])
+
+    # # Voronoi Diagram
+    vor = GeneralizedVoronoi()
+    vor.add_triangles(triangles)
+    vor.add_boundaries([b1, b2, b3, b4])
+    vor.add_points([start, end])
+    vor_result = vor.run(run_type.optimized)
+    # vor.generate_plot()
+    # vor.show()
+
+    # calculate Voronoi potential field
+    vorfield = VoronoiField(vor_result, alpha=np.array(0.001), d_o_max=np.array(.10))
+    potential_voronoi_field = vorfield.run(np.array([cfg.x_resolution, cfg.y_resolution]), start, end)
+    # vorfield.generate_plot()
+    # terrain_field = vorfield.terrain_on_resolution()
+    # vorfield.show()
+
+    cfg.start[0] = start_pos[0] / world_map.shape[0]
+    cfg.start[1] = start_pos[1] / world_map.shape[0]
+    cfg.end[0] = goal_pos[0] / world_map.shape[1]
+    cfg.end[1] = goal_pos[1] / world_map.shape[1]
+
+    sx = int(cfg.start[0] / cfg.x_resolution)
+    sy = int(cfg.start[1] / cfg.y_resolution)
+    gx = int(cfg.end[0] / cfg.x_resolution)
+    gy = int(cfg.end[1] / cfg.y_resolution)
+
+    sx = start_pos[0]
+    sy = start_pos[1]
+    gx = goal_pos[0]
+    gy = goal_pos[1]
+
+    obsmap = np.load('map.npy')
+
+    hybrid_astar_path_planner = HybridAstarPathPlanner(vor_result, obsmap = obsmap, alpha=np.array(10), d_o_max=np.array(cfg.d_o_max))
+    hybrid_astar_path_planner.set_voronoi_potential_field(potential_voronoi_field, obsmap.shape[0], obsmap.shape[1])
+    # hybrid_astar_path_planner.run(None, np.array([cfg.x_resolution, cfg.y_resolution]))
+    hybrid_astar_path_planner.main(cfg)
+
 
     ###  END CODE HERE  ###
     return path
